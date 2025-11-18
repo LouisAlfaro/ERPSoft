@@ -22,35 +22,67 @@ final class AuditMapper
                 ]
             );
 
-            // Limpieza simple para mantener el ejemplo claro (puedes optimizar luego)
-            $am->categories()->each(function ($cm) {
-                $cm->items()->delete();
-                $cm->delete();
-            });
+            // Obtener IDs de categorías existentes en BD
+            $existingCategoryIds = $am->categories()->pluck('id')->toArray();
+            
+            // Obtener IDs de categorías que vienen en la entidad
+            $entityCategoryIds = array_filter(
+                array_map(fn($c) => $c->id, $audit->categories()),
+                fn($id) => $id !== null
+            );
 
             foreach ($audit->categories() as $c) {
-                $cm = CategoryModel::create([
-                    'audit_id'      => $am->id,
-                    'name'          => $c->name,
-                    'creation_date' => now()->toDateString(),
-                ]);
-
-                foreach ($c->items() as $i) {
-                    ItemModel::create([
-                        'category_id'     => $cm->id,
-                        'name'            => $i->name,
-                        'ranking'         => $i->ranking,
-                        'observation'     => $i->observation,
-                        'price'           => $i->price,
-                        'stock'           => $i->stock,
-                        'income'          => $i->income,
-                        'other_income'    => $i->otherIncome,
-                        'total_stock'     => $i->totalStock,
-                        'physical_stock'  => $i->physicalStock,
-                        'difference'      => $i->difference,
-                        'column_15'       => $i->column15,
-                        'creation_date'   => now()->toDateString(),
+                if ($c->id !== null) {
+                    // Actualizar categoría existente
+                    $cm = CategoryModel::find($c->id);
+                    if ($cm) {
+                        $cm->update(['name' => $c->name]);
+                        
+                        // Actualizar items
+                        $cm->items()->delete();
+                        foreach ($c->items() as $i) {
+                            ItemModel::create([
+                                'category_id'     => $cm->id,
+                                'name'            => $i->name,
+                                'ranking'         => $i->ranking,
+                                'observation'     => $i->observation,
+                                'price'           => $i->price,
+                                'stock'           => $i->stock,
+                                'income'          => $i->income,
+                                'other_income'    => $i->otherIncome,
+                                'total_stock'     => $i->totalStock,
+                                'physical_stock'  => $i->physicalStock,
+                                'difference'      => $i->difference,
+                                'column_15'       => $i->column15,
+                                'creation_date'   => now()->toDateString(),
+                            ]);
+                        }
+                    }
+                } else {
+                    // Crear nueva categoría
+                    $cm = CategoryModel::create([
+                        'audit_id'      => $am->id,
+                        'name'          => $c->name,
+                        'creation_date' => now()->toDateString(),
                     ]);
+
+                    foreach ($c->items() as $i) {
+                        ItemModel::create([
+                            'category_id'     => $cm->id,
+                            'name'            => $i->name,
+                            'ranking'         => $i->ranking,
+                            'observation'     => $i->observation,
+                            'price'           => $i->price,
+                            'stock'           => $i->stock,
+                            'income'          => $i->income,
+                            'other_income'    => $i->otherIncome,
+                            'total_stock'     => $i->totalStock,
+                            'physical_stock'  => $i->physicalStock,
+                            'difference'      => $i->difference,
+                            'column_15'       => $i->column15,
+                            'creation_date'   => now()->toDateString(),
+                        ]);
+                    }
                 }
             }
         });

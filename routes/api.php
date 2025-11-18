@@ -51,7 +51,7 @@ Route::middleware(['auth:api','role:ADMIN'])->group(function () {
 // --- Writes: requieren ADMIN o SUPERVISOR ---
 Route::middleware(['auth:api','role:ADMIN|SUPERVISOR'])->group(function () {
     Route::post('/audits/{localId}/open', [AuditController::class, 'open']);
-    Route::post('/audits/{localId}/categories', [AuditController::class, 'addCategory']);
+    Route::post('/audits/{auditId}/categories', [AuditController::class, 'addCategory']);
     Route::post('/audits/categories/{categoryId}/items', [AuditController::class, 'addItems']);
     Route::put('/audits/{localId}/categories/{categoryId}', [AuditController::class, 'renameCategory']);
     Route::delete('/audits/categories/{categoryId}', [AuditController::class, 'removeCategory']);

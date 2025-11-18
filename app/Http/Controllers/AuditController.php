@@ -74,10 +74,10 @@ class AuditController extends Controller
     }
 
     /**
-     * POST /api/audits/{localId}/categories
+     * POST /api/audits/{auditId}/categories
      * Agrega una categoría (y opcionalmente items) a la auditoría.
      */
-    public function addCategory(int $localId, Request $request, AddCategoryWithItems $useCase)
+    public function addCategory(int $auditId, Request $request, AddCategoryWithItems $useCase)
     {
         $data = $request->validate([
             'name'  => ['required','string','min:2'],
@@ -95,11 +95,38 @@ class AuditController extends Controller
             'items.*.column_15'      => ['nullable','integer'],
         ]);
 
-        // Buscar auditoría activa para este local o crear una nueva
-        $audit = $this->getOrCreateAuditForLocal($localId, $request->user('api'));
+        // Buscar la auditoría por ID
+        $audit = AuditModel::where('id', $auditId)
+            ->whereNull('closed_at')
+            ->firstOrFail();
 
         $useCase($audit->uuid, $data['name'], $data['items'] ?? []);
-        return response()->json(['ok' => true]);
+        
+        // Refrescar el modelo para obtener la categoría recién creada
+        $audit->refresh();
+        $newCategory = $audit->categories()->orderByDesc('id')->first();
+        
+        return response()->json([
+            'ok' => true,
+            'category' => [
+                'id' => $newCategory->id,
+                'name' => $newCategory->name,
+                'items' => $newCategory->items->map(fn($i) => [
+                    'id' => $i->id,
+                    'name' => $i->name,
+                    'ranking' => (int)$i->ranking,
+                    'observation' => $i->observation,
+                    'price' => (int)$i->price,
+                    'stock' => (int)$i->stock,
+                    'income' => (int)$i->income,
+                    'other_income' => (int)$i->other_income,
+                    'total_stock' => (int)$i->total_stock,
+                    'physical_stock' => (int)$i->physical_stock,
+                    'difference' => (int)$i->difference,
+                    'column_15' => (int)$i->column_15,
+                ])
+            ]
+        ]);
     }
 
     /**
@@ -717,10 +744,7 @@ class AuditController extends Controller
         ]);
 
         try {
-            // Buscar o crear auditoría para este local
-            $audit = $this->getOrCreateAuditForLocal($localId, $request->user('api'));
-
-            $import = new AuditsImport($audit->id);
+            $import = new AuditsImport($localId);
             Excel::import($import, $request->file('file'));
 
             $summary = $import->getSummary();

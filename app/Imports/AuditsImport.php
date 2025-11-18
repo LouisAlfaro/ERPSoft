@@ -12,113 +12,110 @@ use Src\Audits\Infrastructure\Persistence\Eloquent\Models\ItemModel;
 
 class AuditsImport implements ToCollection, WithHeadingRow
 {
-    protected $auditId;
     protected $errors = [];
-    protected $created = 0;
-    protected $updated = 0;
-    protected $currentCategory = null;
+    protected $categoriesCreated = 0;
+    protected $itemsAdded = 0;
+    protected $localId;
 
-    public function __construct($auditId)
+    public function __construct(int $localId)
     {
-        $this->auditId = $auditId;
+        $this->localId = $localId;
     }
 
     public function collection(Collection $rows)
     {
         DB::transaction(function () use ($rows) {
-            foreach ($rows as $index => $row) {
+            // Buscar auditoría abierta para este local
+            $audit = AuditModel::where('local_id', $this->localId)
+                ->whereNull('closed_at')
+                ->first();
+
+            if (!$audit) {
+                $this->errors[] = "No hay auditoría abierta para el local {$this->localId}. Abre una auditoría primero.";
+                return;
+            }
+
+            // Agrupar filas por categoría
+            $groupedByCategory = $rows->groupBy(function($row) {
+                return trim($row['categoria'] ?? '');
+            });
+
+            foreach ($groupedByCategory as $categoryName => $items) {
+                if (empty($categoryName)) {
+                    continue; // Saltar filas sin categoría
+                }
+
                 try {
-                    $this->processRow($row, $index);
+                    $this->processCategory($audit, $categoryName, $items);
                 } catch (\Exception $e) {
-                    $this->errors[] = "Fila " . ($index + 2) . ": " . $e->getMessage();
+                    $this->errors[] = "Error en categoría '{$categoryName}': " . $e->getMessage();
                 }
             }
         });
     }
 
-    protected function processRow($row, $index)
+    protected function processCategory($audit, $categoryName, $items)
     {
-        // Mapeo de columnas del Excel del cliente
-        $categoryName = $row['categoria'] ?? null;
-        $itemName = $row['item'] ?? $row['descripcion'] ?? null;
-        
-        // Si no hay item name, saltar esta fila
-        if (!$itemName) {
-            return;
-        }
-
-        // 1. Si viene categoría, actualizamos la categoría actual
-        if ($categoryName) {
-            $audit = AuditModel::find($this->auditId);
-            if (!$audit) {
-                throw new \Exception("Auditoría no encontrada");
-            }
-
-            $this->currentCategory = CategoryModel::firstOrCreate(
-                [
-                    'audit_id' => $audit->id,
-                    'name' => trim($categoryName)
-                ]
-            );
-        }
-
-        // Verificar que tengamos una categoría actual
-        if (!$this->currentCategory) {
-            throw new \Exception("No se ha definido una categoría para este item");
-        }
-
-        // 2. Determinar el ranking según las columnas marcadas
-        $ranking = null;
-        
-        // Buscar en las columnas de ranking
-        if (isset($row['cumple']) && $this->isMarked($row['cumple'])) {
-            $ranking = 2; // Verde
-        } elseif (isset($row['en_proceso']) && $this->isMarked($row['en_proceso'])) {
-            $ranking = 1; // Amarillo
-        } elseif (isset($row['no_cumple']) && $this->isMarked($row['no_cumple'])) {
-            $ranking = 0; // Rojo
-        }
-
-        // 3. Buscar si el item ya existe en esta categoría (matching por nombre)
-        $item = ItemModel::where('category_id', $this->currentCategory->id)
-            ->where('name', trim($itemName))
+        // Buscar si la categoría ya existe en esta auditoría
+        $category = CategoryModel::where('audit_id', $audit->id)
+            ->where('name', $categoryName)
             ->first();
 
-        // 4. Preparar datos
-        $data = [
-            'category_id' => $this->currentCategory->id,
-            'name' => trim($itemName),
-            'ranking' => $ranking,
-            'observation' => $row['observaciones'] ?? null,
-            'price' => 0,
-            'stock' => 0,
-            'income' => 0,
-            'other_income' => 0,
-            'total_stock' => 0,
-            'physical_stock' => 0,
-            'difference' => 0,
-            'column_15' => 0,
-        ];
+        $isNewCategory = false;
 
-        // 5. Crear o actualizar
-        if ($item) {
-            $item->update($data);
-            $this->updated++;
-        } else {
-            ItemModel::create($data);
-            $this->created++;
+        if (!$category) {
+            // Crear nueva categoría
+            $category = CategoryModel::create([
+                'audit_id' => $audit->id,
+                'name' => $categoryName,
+                'creation_date' => now()->toDateString(),
+            ]);
+            $isNewCategory = true;
+            $this->categoriesCreated++;
+        }
+
+        // Añadir TODOS los items a la categoría (sin eliminar existentes, sin verificar duplicados)
+        foreach ($items as $row) {
+            $itemName = trim($row['nombre'] ?? '');
+            
+            if (empty($itemName)) {
+                continue; // Saltar filas sin nombre de item
+            }
+
+            // Mapear puntaje de texto a número
+            $ranking = $this->parseRanking($row['puntaje'] ?? '');
+
+            // SIEMPRE crear nuevo item (incluso si ya existe uno con el mismo nombre)
+            ItemModel::create([
+                'category_id' => $category->id,
+                'name' => $itemName,
+                'ranking' => $ranking,
+                'observation' => $row['observaciones'] ?? null,
+                'price' => 0,
+                'stock' => 0,
+                'income' => 0,
+                'other_income' => 0,
+                'total_stock' => 0,
+                'physical_stock' => 0,
+                'difference' => 0,
+                'column_15' => 0,
+                'creation_date' => now()->toDateString(),
+            ]);
+
+            $this->itemsAdded++;
         }
     }
 
-    protected function isMarked($value)
+    protected function parseRanking($value): int
     {
-        if (empty($value)) {
-            return false;
-        }
+        $value = strtoupper(trim($value));
         
-        // Considerar como marcado: X, x, ✓, check, 1, true, si, yes
-        $marked = ['x', 'X', '✓', 'check', '1', 'true', 'si', 'yes', 'sí'];
-        return in_array(strtolower(trim($value)), array_map('strtolower', $marked));
+        return match($value) {
+            'CUMPLE' => 2,
+            'EN PROCESO', 'ENPROCESO', 'EN_PROCESO' => 1,
+            'NO CUMPLE', 'NOCUMPLE', 'NO_CUMPLE' => 0,
+            default => 0,
+        };
     }
 
     public function getErrors()
@@ -129,8 +126,8 @@ class AuditsImport implements ToCollection, WithHeadingRow
     public function getSummary()
     {
         return [
-            'created' => $this->created,
-            'updated' => $this->updated,
+            'categories_created' => $this->categoriesCreated,
+            'items_added' => $this->itemsAdded,
             'errors' => count($this->errors),
         ];
     }
