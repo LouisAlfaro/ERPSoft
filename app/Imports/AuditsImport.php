@@ -15,23 +15,23 @@ class AuditsImport implements ToCollection, WithHeadingRow
     protected $errors = [];
     protected $categoriesCreated = 0;
     protected $itemsAdded = 0;
-    protected $localId;
+    protected $auditId;
 
-    public function __construct(int $localId)
+    public function __construct(int $auditId)
     {
-        $this->localId = $localId;
+        $this->auditId = $auditId;
     }
 
     public function collection(Collection $rows)
     {
         DB::transaction(function () use ($rows) {
-            // Buscar auditoría abierta para este local
-            $audit = AuditModel::where('local_id', $this->localId)
+            // Buscar auditoría por ID
+            $audit = AuditModel::where('id', $this->auditId)
                 ->whereNull('closed_at')
                 ->first();
 
             if (!$audit) {
-                $this->errors[] = "No hay auditoría abierta para el local {$this->localId}. Abre una auditoría primero.";
+                $this->errors[] = "No se encontró auditoría con ID {$this->auditId} o ya está cerrada.";
                 return;
             }
 

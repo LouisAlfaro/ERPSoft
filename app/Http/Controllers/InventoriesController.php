@@ -100,14 +100,8 @@ class InventoriesController extends Controller
                 'total_stock' => (int)$inventory->total_stock,
                 'physical_stock' => (int)$inventory->physical_stock,
                 'difference' => (int)$inventory->difference,
-                'area' => [
-                    'id' => $inventory->area->id,
-                    'name' => $inventory->area->name,
-                ],
-                'local' => [
-                    'id' => $inventory->area->local->id,
-                    'name' => $inventory->area->local->name,
-                ],
+                'area' => $inventory->area->name,
+                'local' => $inventory->area->local->name,
                 'company' => [
                     'id' => $inventory->area->local->company->id,
                     'name' => $inventory->area->local->company->name,
@@ -348,19 +342,19 @@ class InventoriesController extends Controller
     }
 
     /**
-     * POST /api/inventories-areas/{areaId}/import
+     * POST /api/locals/{localId}/inventories/import
      * Importar inventories desde Excel
      */
-    public function import(int $areaId, Request $request)
+    public function import(int $localId, Request $request)
     {
-        $area = InventoriesAreaModel::findOrFail($areaId);
+        $local = \Src\Organizations\Infrastructure\Persistence\Eloquent\Models\LocalModel::findOrFail($localId);
 
         $request->validate([
             'file' => ['required', 'file', 'mimes:xlsx,xls,csv']
         ]);
 
         try {
-            $import = new InventoriesImport($areaId);
+            $import = new InventoriesImport($localId);
             Excel::import($import, $request->file('file'));
 
             $summary = $import->getSummary();

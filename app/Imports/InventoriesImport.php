@@ -13,70 +13,91 @@ use Src\Organizations\Infrastructure\Persistence\Eloquent\Models\LocalModel;
 class InventoriesImport implements ToCollection, WithHeadingRow
 {
     protected $errors = [];
-    protected $created = 0;
-    protected $updated = 0;
-    protected $areaId;
+    protected $areasCreated = 0;
+    protected $itemsAdded = 0;
+    protected $localId;
 
-    public function __construct(int $areaId)
+    public function __construct(int $localId)
     {
-        $this->areaId = $areaId;
+        $this->localId = $localId;
     }
 
     public function collection(Collection $rows)
     {
         DB::transaction(function () use ($rows) {
-            foreach ($rows as $index => $row) {
+            // Verificar que el local existe
+            $local = LocalModel::find($this->localId);
+            if (!$local) {
+                $this->errors[] = "Local con ID {$this->localId} no encontrado.";
+                return;
+            }
+
+            // Agrupar filas por Sub area
+            $groupedByArea = $rows->groupBy(function($row) {
+                return trim($row['sub_area'] ?? '');
+            });
+
+            foreach ($groupedByArea as $areaName => $items) {
+                if (empty($areaName)) {
+                    continue; // Saltar filas sin sub area
+                }
+
                 try {
-                    $this->processRow($row, $index);
+                    $this->processArea($areaName, $items);
                 } catch (\Exception $e) {
-                    $this->errors[] = "Fila " . ($index + 2) . ": " . $e->getMessage();
+                    $this->errors[] = "Error en área '{$areaName}': " . $e->getMessage();
                 }
             }
         });
     }
 
-    protected function processRow($row, $index)
+    protected function processArea($areaName, $items)
     {
-        // Mapeo de columnas del Excel del cliente a nuestros campos
-        $itemName = $row['descripcion'] ?? null;
-        
-        if (!$itemName) {
-            throw new \Exception("Falta Descripción del item");
-        }
-
-        // Verificar que el área existe
-        $area = InventoriesAreaModel::find($this->areaId);
-        if (!$area) {
-            throw new \Exception("Área de inventario no encontrada");
-        }
-
-        // Buscar si el item ya existe en esta área (matching por nombre)
-        $inventory = InventoriesModel::where('inventories_area_id', $this->areaId)
-            ->where('name', trim($itemName))
+        // Buscar si el área ya existe en este local
+        $area = InventoriesAreaModel::where('local_id', $this->localId)
+            ->where('name', $areaName)
             ->first();
 
-        // Preparar datos
-        $data = [
-            'inventories_area_id' => $this->areaId,
-            'name' => trim($itemName),
-            'price' => $this->parseNumber($row['precio_unitario'] ?? 0),
-            'stock' => $this->parseNumber($row['stock_actual'] ?? 0),
-            'income' => $this->parseNumber($row['ingresos'] ?? 0),
-            'other_income' => $this->parseNumber($row['otros_ingresos'] ?? 0),
-            'total_stock' => $this->parseNumber($row['total'] ?? 0),
-            'physical_stock' => $this->parseNumber($row['stock_fisico'] ?? 0),
-            'difference' => $this->parseNumber($row['diferencia'] ?? 0),
-            'observation' => $row['observaciones'] ?? null,
-            'ranking' => null, // No viene en el formato del cliente
-        ];
+        $isNewArea = false;
 
-        // Crear o actualizar
-        if ($inventory) {
-            $inventory->update($data);
-            $this->updated++;
-        } else {
-            InventoriesModel::create($data);
-            $this->created++;
+        if (!$area) {
+            // Crear nueva área
+            $area = InventoriesAreaModel::create([
+                'local_id' => $this->localId,
+                'name' => $areaName,
+                'creation_date' => now()->toDateString(),
+                'update_date' => now()->toDateString(),
+            ]);
+            $isNewArea = true;
+            $this->areasCreated++;
+        }
+
+        // Añadir TODOS los items al área (sin eliminar existentes, sin verificar duplicados)
+        foreach ($items as $row) {
+            $itemName = trim($row['descripcion'] ?? '');
+            
+            if (empty($itemName)) {
+                continue; // Saltar filas sin descripción
+            }
+
+            // SIEMPRE crear nuevo item (incluso si ya existe uno con el mismo nombre)
+            InventoriesModel::create([
+                'inventories_area_id' => $area->id,
+                'name' => $itemName,
+                'price' => $this->parseNumber($row['precio_unitario'] ?? 0),
+                'stock' => $this->parseNumber($row['stock_actual'] ?? 0),
+                'income' => $this->parseNumber($row['ingresos'] ?? 0),
+                'other_income' => $this->parseNumber($row['otros_ingresos'] ?? 0),
+                'total_stock' => $this->parseNumber($row['total'] ?? 0),
+                'physical_stock' => $this->parseNumber($row['stock_fisico'] ?? 0),
+                'difference' => $this->parseNumber($row['diferencia'] ?? 0),
+                'observation' => $row['observaciones'] ?? null,
+                'ranking' => null,
+                'creation_date' => now()->toDateString(),
+                'update_date' => now()->toDateString(),
+            ]);
+
+            $this->itemsAdded++;
         }
     }
 
@@ -98,8 +119,8 @@ class InventoriesImport implements ToCollection, WithHeadingRow
     public function getSummary()
     {
         return [
-            'created' => $this->created,
-            'updated' => $this->updated,
+            'areas_created' => $this->areasCreated,
+            'items_added' => $this->itemsAdded,
             'errors' => count($this->errors),
         ];
     }

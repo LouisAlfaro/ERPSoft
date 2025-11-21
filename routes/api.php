@@ -60,7 +60,7 @@ Route::middleware(['auth:api','role:ADMIN|SUPERVISOR'])->group(function () {
     Route::post('/audits/{auditId}/close', [AuditController::class, 'close']);
     
     // Import/Export de auditorías
-    Route::post('/audits/{localId}/import', [AuditController::class, 'import']);
+    Route::post('/audits/{auditId}/import', [AuditController::class, 'import']);
     Route::get('/audits/{localId}/export', [AuditController::class, 'export']);
 });
 
@@ -85,7 +85,7 @@ Route::middleware(['auth:api','role:ADMIN|SUPERVISOR'])->group(function () {
     Route::delete('/inventories/{inventoryId}', [InventoriesController::class, 'deleteInventory']);
     
     // Import/Export de inventories
-    Route::post('/inventories-areas/{areaId}/import', [InventoriesController::class, 'import']);
+    Route::post('/locals/{localId}/inventories/import', [InventoriesController::class, 'import']);
     Route::get('/inventories-areas/{areaId}/export', [InventoriesController::class, 'export']);
 });
 

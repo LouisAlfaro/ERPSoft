@@ -734,17 +734,17 @@ class AuditController extends Controller
     }
 
     /**
-     * POST /api/audits/{localId}/import
+     * POST /api/audits/{auditId}/import
      * Importar auditoría desde Excel
      */
-    public function import(int $localId, Request $request)
+    public function import(int $auditId, Request $request)
     {
         $request->validate([
             'file' => ['required', 'file', 'mimes:xlsx,xls,csv']
         ]);
 
         try {
-            $import = new AuditsImport($localId);
+            $import = new AuditsImport($auditId);
             Excel::import($import, $request->file('file'));
 
             $summary = $import->getSummary();
